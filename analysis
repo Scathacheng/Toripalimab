@@ -1,0 +1,511 @@
+#R
+#macOS 10.15.7
+#R version 4.1.2
+
+rm(list=ls())
+setwd("Downloads/data-analysis/togather/")
+
+#PCA
+library(ggplot2)
+library(ggfortify) 
+#GSVA
+library(genefilter)
+library(GSVA)
+library(Biobase)
+library(stringr)
+library(dplyr)
+library(clusterProfiler) #load gmt file
+library(org.Hs.eg.db)
+library(pheatmap)
+#histogram
+library(ggpubr)
+#DEG analysis
+library(nlme)
+library(sva)
+library(reshape2)
+library(ggrepel)
+#WGCNA analysis
+library(WGCNA)
+library(nlme)
+library(preprocessCore)
+#CIBERSORT
+library(CIBERSORT)
+library(tidyverse)
+
+###############################################################
+#1 load data and preprocess
+
+#load data
+data = read.csv("data/NSCLC_FPKM_pre_tumor.csv",header=T,row.names=1)
+#gene = 61279
+#sample = 17
+
+#remove ncRNA, rRNA, mitochondrial gene, and pseudogene
+data = data[!grepl("^RPL", data$gene_name),]
+data = data[!grepl("^RPS", data$gene_name),]
+data = data[!grepl("^RNU", data$gene_name),]
+data = data[!grepl("^ENSG", data$gene_name),]
+data = data[!grepl("^LINC", data$gene_name),]
+data = data[!grepl("^MIR", data$gene_name),]
+data = data[!grepl("^Y_RNA", data$gene_name),]
+data = data[!grepl("^Metazoa", data$gene_name),]
+data = data[!grepl("^7S", data$gene_name),]
+data = data[!grepl("^5S", data$gene_name),]
+data = data[!grepl("^5_8S", data$gene_name),]
+data = data[!grepl("^RN7S", data$gene_name),]
+data = data[!grepl("^RNA5S", data$gene_name),]
+data = data[!grepl("^RNA5-8", data$gene_name),]
+data = data[!grepl("^SNOR", data$gene_name),]
+data = data[!grepl("^HNR", data$gene_name),]
+data = data[!grepl("^U1", data$gene_name),]
+data = data[!grepl("^U2", data$gene_name),]
+data = data[!grepl("^U3", data$gene_name),]
+data = data[!grepl("^U4", data$gene_name),]
+data = data[!grepl("^U6", data$gene_name),]
+data = data[!grepl("^U7", data$gene_name),]
+data = data[!grepl("^U8", data$gene_name),]
+data = data[!grepl("^MT-", data$gene_name),]
+data = data[!grepl("^MTATP", data$gene_name),]
+data = data[!grepl("^MTCO", data$gene_name),]
+data = data[!grepl("^MRP", data$gene_name),]
+data = data[!grepl("\\-AS", data$gene_name),]
+data = data[!grepl("\\-DT", data$gene_name),]
+data = data[!grepl("\\-", data$gene_name),]
+data = data[!grepl("1P", data$gene_name),]
+#gene = 25214
+
+#remove duplicated gene
+data1 = data[!duplicated(data$gene_name),] 
+rownames(data1) = data1[,1]
+data1 = data1[,-1]
+
+expr = data[,-1]
+s = unique(data$gene_name[duplicated(data$gene_name)])
+data2 = sapply(s, function(i){
+    colMeans(expr[data$gene==i,])
+    })
+data2 = t(data2)
+test = data1[setdiff(rownames(data1),s),]   
+data3 = rbind(data2, test); 
+#gene = 25190
+
+#load metadata
+datMeta = read.csv("data/NSCLC_pdata_pre_tumor.csv",header=T,row.names=1)
+
+#PCA
+#remove potential outlier
+library(ggplot2)
+library(ggfortify) 
+
+expr = as.matrix(t(data3))
+pc = prcomp(expr)
+pdf("figure/figureS1.pdf",h=5,w=6)
+autoplot(pc, data = datMeta1, colour = "Group", label.repel = T)  
+dev.off()
+
+datMeta = rbind(datMeta[4:10,],datMeta[1:3,],datMeta[11:16,])
+datMeta$Group = factor(datMeta$Group, levels=c("NonMPR","MPR","PCR"))
+
+datMeta$RES = "Response"
+datMeta[datMeta$Group == "NonMPR",]$RES = "NonResponse"
+datMeta$RES = factor(datMeta$RES, levels=c("NonResponse","Response"))
+
+datMeta$PCR = "NonPCR"
+datMeta[datMeta$Group == "PCR",]$PCR = "PCR"
+datMeta$PCR = factor(datMeta$PCR, levels=c("NonPCR","PCR"))
+
+datMeta1 = datMeta[!rownames(datMeta) %in% c("R_22_03_024A","R_20_06_015A","R_20_10_008A"),]
+
+data3 = data3[,rownames(datMeta1)]
+#gene = 25190
+#sample = 16
+save(data3, datMeta1, file = "figure/workingdata.RData")
+
+###############################################################
+#2 GSVA
+
+#GSVA protocal
+library(genefilter)
+library(GSVA)
+library(Biobase)
+library(stringr)
+library(dplyr)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(pheatmap)
+
+rm(list=ls())
+load("figure/workingdata.RData")
+expr = as.matrix(data3)
+
+geneset = read.gmt("data/c7.all.v2023.2.Hs.symbols.gmt")
+geneset_list = split(geneset$gene, geneset$term)
+
+kegg = gsva(expr, geneset_list, kcdf = "Gaussian", method = "gsva", parallel.sz = 12)
+write.csv(kegg, "figure/tableS1_GSVAscore.csv")
+#1
+list = c("GSE12366_GC_VS_NAIVE_BCELL_UP","GSE12366_GC_VS_MEMORY_BCELL_UP","GSE13411_PLASMA_CELL_VS_MEMORY_BCELL_UP","GSE12366_PLASMA_CELL_VS_NAIVE_BCELL_UP","GSE12366_PLASMA_CELL_VS_MEMORY_BCELL_UP")
+
+kegg.list = kegg[list,]
+annotation_col = data.frame(group = c(rep("nonMPR",6),rep("MPR",3),rep("PCR",4)))
+rownames(annotation_col) = rownames(datMeta1)
+
+pheatmap(kegg.list,
+    show_colnames = T,
+    cluster_rows = T, cluster_cols = F, 
+    annotation_col = annotation_col,
+    filename = "figure/Figure4A_GCBcell.pdf", width = 8, height = 3)
+#2
+list = c("GOLDRATH_EFF_VS_MEMORY_CD8_TCELL_UP","GSE9650_NAIVE_VS_EFF_CD8_TCELL_UP","GSE10239_NAIVE_VS_MEMORY_CD8_TCELL_UP","GSE9650_NAIVE_VS_MEMORY_CD8_TCELL_UP","GOLDRATH_NAIVE_VS_MEMORY_CD8_TCELL_UP","GSE10325_BCELL_VS_MYELOID_UP")
+
+kegg.list = kegg[list,]
+annotation_col = data.frame(group = c(rep("nonMPR",6),rep("MPR",3),rep("PCR",4)))
+rownames(annotation_col) = rownames(datMeta1)
+
+pheatmap(kegg.list,
+    show_colnames = T,
+    cluster_rows = T, cluster_cols = F, 
+    annotation_col = annotation_col,
+    filename = "figure/FigureS2_Tcell.pdf", width = 8, height = 3)
+
+#histogram
+library(ggplot2)
+library(ggpubr)
+
+rm(list=ls())
+load("figure/workingdata.RData")
+
+input = t(data3["CHEK1",])
+input = as.data.frame(input)
+input$group = c(rep("nonMPR",6),rep("MPR",3),rep("PCR",4))
+input$pcr = c(rep("nonPCR",9),rep("PCR",4))
+colnames(input) = c("exp","group","pcr")
+input$group = factor(input$group, levels = c("nonMPR","MPR","PCR"))
+input$pcr = factor(input$pcr, levels = c("nonPCR","PCR"))
+
+input1 = input[input$group %in% c("nonMPR","MPR"),]
+p = ggboxplot(input1, x="group", y="exp", color = "group", add = "jitter") +
+        stat_compare_means() 
+        ggpar(p, ylim = c(0,8))
+
+input2 = input[input$group %in% c("nonMPR","PCR"),]
+p = ggboxplot(input2, x="group", y="exp", color = "group", add = "jitter") +
+        stat_compare_means() 
+        ggpar(p, ylim = c(0,8))
+
+p = ggboxplot(input, x="pcr", y="exp", color = "pcr", add = "jitter") +
+        stat_compare_means() 
+        ggpar(p, ylim = c(0,8))
+
+#
+kegg1 = t(kegg["GSE12366_GC_VS_NAIVE_BCELL_UP",])
+kegg1 = as.data.frame(kegg1)
+kegg1$group = c(rep("non-pCR",9),rep("pCR",4))
+colnames(kegg1) = c("value","group")
+
+kegg1$value = as.numeric(kegg1$value)
+kegg1$group = factor(kegg1$group, levels = c("non-pCR","pCR"))
+my_comparison = c("non-pCR","pCR")
+
+pdf("figure/C6.pdf",h=5,w=4)
+ggboxplot(kegg1, x="group",y="value", color="group",add="jitter") +
+    stat_compare_means() 
+dev.off()
+
+
+###############################################################
+#3 Differential gene expression analysis
+
+#combine nonMPR and MPR as nonPCR group
+library(nlme)
+library(sva)
+library(reshape2)
+library(ggplot2)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+rm(list=ls())
+load("figure/workingdata.RData")
+data3 = as.matrix(data3)
+data3 = log(data3+1, base=2)
+
+meta1 = matrix(NA, nrow=nrow(data3), ncol=3)
+for(i in 1:nrow(data3)) {
+  if(i%%100==0) print(i)
+  expr = data3[i,]
+  tryCatch({
+    meta1[i,] = summary(lme(expr~ PCR, data = datMeta1, random=~1|X))$tTable[2,c(1,2,5)]
+  }, error=function(e){})
+}
+meta1 = as.data.frame(meta1)
+colnames(meta1) = c("beta", "SE", "p")
+rownames(meta1) = rownames(data3)
+meta1$fdr = p.adjust(meta1$p, "fdr")
+table(meta1$p<0.05 & abs(meta1$beta)>1) #251
+write.csv(meta1, file="figure/tableS2-DEGlme.csv")
+
+#volcano plot
+meta2 = read.csv("figure/tableS2-DEGlme.csv",header=T,row.names=1)
+meta2$Gene = rownames(meta2)
+meta2 = na.omit(meta2)
+threshold_fdr = 0.05
+threshold_beta = 1
+
+meta2$direction = ifelse(meta2$fdr < threshold_fdr & abs(meta2$beta) >= threshold_beta, ifelse(meta2$beta > threshold_beta, "up","down"), "NoSig")
+genelist = c("ANP32B","NAA50","ALDH1A1","RNF168","FABP9")
+
+p = ggplot(meta2, aes(x = beta, y = -log10(fdr))) +
+    geom_point(aes(color = direction), size=2) +
+    scale_color_manual(values = c("blue","grey","red")) +
+    geom_point(size = 2, shape = 1, data = meta2[genelist,]) +
+    geom_text_repel(
+        data = meta2[genelist,], aes(label = Gene), alpha = 1, 
+        size = 5, 
+        box.padding = unit(0.35, "lines"),
+        point.padding = unit(0.3, "lines")) +
+    geom_vline(xintercept = c(-1,1),lty = 4, col="black", lwd = 0.8) + #X轴的线
+    geom_hline(yintercept = 1.3, lty = 4, col="black", lwd = 0.8)+ #Y轴的线
+    scale_y_continuous(limits = c(0, 2.5))+
+    scale_x_continuous(limits = c(-4,4))
+    labs(x="log2(fold change)",y="-log10(FDR)")
+    theme(legend.position = "bottom")
+
+pdf("figure/Figure4C-volcano.pdf",h=5,w=6)
+p
+dev.off()
+
+#GO plot
+meta2 = read.csv("figure/tableS2-DEGlme.csv",header=T,row.names=1)
+meta2$Gene = rownames(meta2)
+
+meta2 = meta2[meta2$fdr < 0.05,]
+meta3 = meta2[meta2$p < 0.05 & meta2$beta > 1,]
+meta4 = meta2[meta2$p < 0.05 & meta2$beta < -1,]
+
+genes = rownames(meta2)
+go <- enrichGO(genes, OrgDb = org.Hs.eg.db, ont='ALL', pAdjustMethod = 'BH',pvalueCutoff = 0.05, qvalueCutoff = 0.2, keyType = 'SYMBOL')
+write.csv(go, "result/GO_pcrresponse.csv")
+pdf("figure/Figure4D-GO.pdf",h=3,w=6)
+barplot(go, showCategory=10, orderBy="Count")
+dev.off()
+
+###############################################################
+#4 WGCNA analysis
+
+###construct network
+library(WGCNA)
+library(nlme)
+library(preprocessCore)
+
+rm(list=ls())
+
+load("figure/workingdata.RData")
+data3 = as.matrix(data3)
+#log转换和quantile normalization
+data3 = log(data3+1, base=2)
+data3 = data.matrix(data3)
+datExpr = normalize.quantiles(data3)
+dimnames(datExpr) = dimnames(data3)
+
+#select sofe threshold
+enableWGCNAThreads()
+allowWGCNAThreads()
+powers = c(seq(1,9,by=1),seq(10,30,by=2))
+sft = pickSoftThreshold(t(datExpr), powerVector = powers, networkType="signed", verbose = 5)
+#soft threshold is 16
+
+pdf("figure/FigureS3-softthreshold.pdf")
+par(mfrow=c(1,2))
+cex1 = 0.9
+plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",main = paste("Scale independence"))
+text(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],labels=powers,cex=cex1,col="red")
+abline(h=0.90,col="red")
+plot(sft$fitIndices[,1], sft$fitIndices[,5],xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",main = paste("Mean connectivity"))
+text(sft$fitIndices[,1], sft$fitIndices[,5], labels=powers, cex=cex1,col="red")
+dev.off()
+
+#network
+net<- blockwiseModules(t(datExpr), power = 16, networkType = "signed", TOMType ="signed", corType="pearson", maxBlockSize=20000, maxModuleSize =4000, minModuleSize = 100, reassignThreshold = 0, mergeCutHeight = 0.25, numericLabels = TRUE, pamRespectsDendro = FALSE, saveTOMs = TRUE, saveTOMFileBase ="Together" , verbose = 3)
+table(net$colors)
+moduleLabels = net$colors
+moduleColors = labels2colors(net$colors)
+MEs = net$MEs
+geneTree = net$dendrograms[[1]]
+MEs0 = moduleEigengenes(t(datExpr), moduleColors)$eigengenes
+kMEtable = signedKME(t(datExpr), MEs0)
+tableS1 = data.frame(kMEtable[,paste0("kME", labels2colors(c(0:47)))])
+colnames(tableS1) = paste0("KME.ME", c(0:47))
+tableS1 = cbind(data.frame(Module.Color = moduleColors, Module.name = paste0("ME", net$colors)), tableS1)
+
+pdf("figure/FigureS4-clustertree.pdf")
+plotDendroAndColors(geneTree, moduleColors, groupLabels = "mod", cex.colorLabels = 0.5, addGuide=T, dendroLabels=F)
+dev.off()
+write.csv(tableS1, "figure/tableS4-kMEtable.csv")
+save(datExpr, datMeta1, geneTree, moduleColors, MEs, MEs0, kMEtable, file = "figure/finalizedNetwork.RData")
+
+#module-trait correlation
+datMeta2 = datMeta1[,c("Group","PCR")]
+datMeta2$Group = as.numeric(c(rep(1,6), rep(2,3), rep(3,4)))
+datMeta2$PCR = as.numeric(c(rep(1,9),rep(2,4)))
+corresult = cor(MEs, datMeta2, use = "p")
+nSamples = ncol(datExpr)
+p = corPvalueFisher(corresult, nSamples)
+q = p.adjust(p, method = "fdr")
+dim(q) = dim(p)
+dimnames(q) = dimnames(p)
+
+textMatrix =  paste(signif(corresult, 2), "\n(",
+                           signif(p, 1), ")", sep = "")
+pdf("figure/FigureS5-heatmapModule.pdf",h=18,w=4)
+par(mar = c(6, 8.5, 3, 3))
+labeledHeatmap(Matrix = corresult,
+               xLabels = colnames(corresult),
+               yLabels = rownames(corresult),
+               ySymbols = rownames(corresult),
+               colorLabels = FALSE,
+               colors = blueWhiteRed(50),
+               textMatrix = textMatrix,
+               setStdMargins = FALSE,
+               cex.text = 0.5,
+               zlim = c(-1,1),
+               main = paste("Module-trait relationships"))
+dev.off()
+
+corresult2 = corresult[c("ME44","ME42","ME1","ME36","ME2","ME5","ME4","ME46"),]
+p2 = p[rownames(corresult2),]
+textMatrix =  paste(signif(corresult2, 2), "\n(",
+                           signif(p2, 1), ")", sep = "")
+pdf("figure/Figure4E-heatmapModule.pdf",h=4,w=4)
+par(mar = c(6, 8.5, 3, 3))
+labeledHeatmap(Matrix = corresult2,
+               xLabels = colnames(corresult2),
+               yLabels = rownames(corresult2),
+               ySymbols = rownames(corresult2),
+               colorLabels = FALSE,
+               colors = blueWhiteRed(50),
+               textMatrix = textMatrix,
+               setStdMargins = FALSE,
+               cex.text = 0.5,
+               zlim = c(-1,1),
+               main = paste("Module-trait relationships"))
+dev.off()
+
+
+#immune cell enrichment
+marker.list<-read.table("data/PanglaoDB_markers_27_Mar_2020.tsv",header=T,sep="\t")
+marker.list$cell.type = as.factor(marker.list$cell.type)
+marker.level<-levels(marker.list$cell.type)
+net = read.csv("figure/tableS4-kMEtable.csv",header=T,row.names=1)
+
+ptable<-data.frame()#pvalue of fisher test
+otable<-data.frame()#odds ratio
+ctable<-data.frame()#number of overlap genes
+#calculate fisher.test
+for (i in c(paste0("ME", c(0:47)))) {
+    for (j in 1:length(marker.level)) {
+        genelist<-marker.list[marker.list$cell.type==marker.level[j],]$official.gene.symbol
+        cluster.gene<-rownames(net[which(net$Module.name == i),])
+        n=25190  #length of total gene
+        x<-genelist
+        y<-cluster.gene
+        a1<-length(intersect(x,y))
+        b1<-length(x)-a1
+        c1<-length(y)-a1
+        d1<-n-a1-b1-c1
+        ptable[i,j]<-fisher.test(rbind(c(a1,b1),c(c1,d1)))$p.value
+        ctable[i,j]<-a1
+        otable[i,j]<-fisher.test(rbind(c(a1,b1),c(c1,d1)))$estimate
+}}
+colnames(otable)<-colnames(ptable)<-colnames(ctable)<-marker.level
+rownames(ctable) = paste0("overlap.", "ME.", c(0:47))
+rownames(ptable) = paste0("pvalue.", "ME.", c(0:47))
+rownames(otable) = paste0("estimate.", "ME.", c(0:47))
+table = cbind(t(ctable),t(otable))
+table = cbind(table,t(ptable))
+
+#write.csv(file="result.baseline/WGCNA/TableS5-CellEnrichment.csv",table)
+write.csv(file="figure/tableS5-CellEnrichmentPvalue.csv",t(ptable))
+
+library(gplots)
+data = read.csv("figure/TableS5-CellEnrichmentPvalue.csv",header=T,row.names=1)
+
+pvalue = as.matrix(data)
+colnames(pvalue) = substr(colnames(pvalue),8,nchar(colnames(pvalue)))
+pvalue1 = pvalue[c("B cells","B cells memory","Plasma cells","Natural killer T cells","NK cells","T regulatory cells","Neutrophils","Dendritic cells","Macrophages","Myeloid-derived suppressor cells","Fibroblasts","Endothelial cells"),]
+
+pdf("figure/FigureS6-CellType.pdf",w=18,h=6)
+heatmap.2(-log10(pvalue1),col=blueWhiteRed(1000,1)[500:1000],
+          scale="none",trace="none",cexRow = 0.8,cexCol = .8, density.info = "none", 
+          colsep=0:7,rowsep=0:8,sepcolor="grey",sepwidth=c(0.02,0.02),
+          srtCol=45,offsetRow=0,offsetCol=-0.5,
+          #Rowv=mod.name, Colv=rownames(pvalue),
+          key=T,key.xlab="-log10(P)", cellnote=signif(pvalue1,1), notecex=.8, notecol="black",main="Enrichment")
+dev.off()
+
+
+pvalue2 = pvalue1[,c("ME.44","ME.42","ME.1","ME.36","ME.2","ME.5","ME.4","ME.46")]
+pdf("figure/Figure4F-CellType.pdf",w=7,h=5)
+heatmap.2(-log10(pvalue2),col=blueWhiteRed(1000,1)[500:1000],
+          scale="none",trace="none",cexRow = 0.8,cexCol = .8, density.info = "none", 
+          colsep=0:7,rowsep=0:8,sepcolor="grey",sepwidth=c(0.02,0.02),
+          srtCol=45,offsetRow=0,offsetCol=-0.5,
+          #Rowv=mod.name, Colv=rownames(pvalue),
+          key=T,key.xlab="-log10(P)", cellnote=signif(pvalue2,1), notecex=.8, notecol="black",main="Enrichment")
+dev.off()
+
+#GO of ME
+#GO analysis
+rm(list=ls())
+net = read.csv("figure/tableS4-kMEtable.csv",header=T,row.names=1)
+
+gene = rownames(net[which(net$Module.name == "ME36"),])
+go <- enrichGO(gene, OrgDb = org.Hs.eg.db, ont='ALL',pAdjustMethod = 'BH',pvalueCutoff = 0.05, qvalueCutoff = 0.2,keyType = 'SYMBOL')
+write.csv(go, "figure/tableS6-GO-ME36.csv")
+pdf("figure/Figure4G-GO-ME36.pdf",h=6,w=6)
+barplot(go,showCategory=10,orderBy="Count")
+dev.off()
+
+###############################################################
+#5 CIBERSORT
+library(CIBERSORT)
+library(tidyverse)
+
+load("figure/workingdata.RData")
+
+data.use1 = as.data.frame(data3)
+data.use1 = rownames_to_column(data.use1)
+write.table(data.use1, file="expr.txt", row.names=F, quote=F, sep="\t")
+
+lm22f = system.file("extdata","LM22.txt",package="CIBERSORT")
+TME.results = cibersort(lm22f, "expr.txt", perm = 1000, QN=T)
+write.csv(TME.results, "figure/TMEresults.csv")
+
+#heatmap
+library(pheatmap)
+k = apply(TME.results, 2, function(x) {sum(x == 0) < nrow(TME.results)/2})
+table(k)
+#k
+#FALSE  TRUE 
+#    5    20
+
+res = as.data.frame(t(TME.results[,k]))
+Group = factor(c(rep("NonMPR",6),rep("MPR",3),rep("PCR",4)), levels=c("NonMPR","MPR","PCR"))
+res3 = res[1:17,]
+
+an = data.frame(group = Group, row.names = colnames(res))
+pheatmap(res3, scale='row',
+        show_colnames = F,
+        cluster_cols = F,
+        annotation_col = an,
+        color = colorRampPalette(c("navy","white","firebrick3"))(50))
+
+#proportion
+k = colSums(TME.results)>0; table(k)
+
+res3 = res3[,k]
+library(tinyarray)
+draw_boxplot(res3, factor(Group),
+            drop = T,
+            color = mypalette(length(unique(Group)))) +
+    labs(x = "Cell Type", y = "Estimated Proportion")
+
